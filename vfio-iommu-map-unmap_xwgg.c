@@ -12,7 +12,7 @@
 
 #include <linux/ioctl.h>
 #include <linux/vfio.h>
-
+#define u32 unsigned int 
 #define MAP_SIZE (1UL * 1024 * 1024 * 1024)
 #define MAP_CHUNK (4 * 1024 * 20)
 #define REALLOC_INTERVAL 30
@@ -26,6 +26,53 @@ void usage(char *name)
 	printf("\tf:    PCI function, ex. 0\n");
 }
 int gsize = 0;
+int device_fd;
+
+int vfio_get_device(int groupfd, const char *name)
+{
+    struct vfio_device_info dev_info = { .argsz = sizeof(dev_info) };
+    int ret, device_fd;
+	struct vfio_region_info *info;
+	void *regbar;
+	u32 testreg_off = 0xb800;
+	void *membar;
+
+	info = malloc(sizeof(struct vfio_region_info));
+	device_fd = ioctl(groupfd, VFIO_GROUP_GET_DEVICE_FD, name);
+    if (device_fd < 0) {
+		printf("error getting device from group %d\n", groupfd);
+		return device_fd;
+    }
+
+    ret = ioctl(device_fd, VFIO_DEVICE_GET_INFO, &dev_info);
+    if (ret) {
+        printf("error getting device info");
+        close(device_fd);
+        return ret;
+    }
+	printf("name is %s, device_fd is %d\n",name, device_fd);
+	printf("device info , num irq is %d,num region is %d, flag is %x\n",
+			dev_info.num_irqs, dev_info.num_regions, dev_info.flags);
+
+	/*membar*/
+	info->index = 0;
+	info->argsz = sizeof(struct vfio_region_info);
+	if (ioctl(device_fd, VFIO_DEVICE_GET_REGION_INFO, info)) {
+		printf("get region failed\n");
+	}
+	printf("region 0: size is 0x%lx, offset is 0x%llx\n", info->size, info->offset);
+	membar = mmap(NULL, info->size, PROT_READ|PROT_WRITE, MAP_SHARED, device_fd, info->offset);
+	/*regbar*/
+	info->index = 2;
+	if (ioctl(device_fd, VFIO_DEVICE_GET_REGION_INFO, info)) {
+		printf("get region failed\n");
+	}
+	printf("region 2: size is 0x%lx, offset is 0x%llx\n", info->size, info->offset);
+	regbar = mmap(NULL, info->size, PROT_READ|PROT_WRITE, MAP_SHARED, device_fd, info->offset);
+	printf("value of offset 0xb800 is 0x%lx\n", *((u32 *)(regbar + testreg_off)));
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
 	int seg, bus, slot, func;
@@ -57,7 +104,7 @@ int main(int argc, char **argv)
 		usage(argv[0]);
 		return -1;
 	}
-
+	printf("argv[1] is %s\n", argv[1]);
 	container = open("/dev/vfio/vfio", O_RDWR);
 	if (container < 0) {
 		printf("Failed to open /dev/vfio/vfio, %d (%s)\n",
@@ -85,12 +132,12 @@ int main(int argc, char **argv)
 
 	iommu_group_path[len] = 0;
 	group_name = basename(iommu_group_path);
-
 	if (sscanf(group_name, "%d", &groupid) != 1) {
 		printf("Unknown group\n");
 		return -1;
 	}
 
+	printf("group_name is %s, group id is %d\n", group_name, groupid);
 	snprintf(path, sizeof(path), "/dev/vfio/%d", groupid);
 	group = open(path, O_RDWR);
 	if (group < 0) {
@@ -139,22 +186,6 @@ int main(int argc, char **argv)
 
 
 		/* Every REALLOC_INTERVAL, dump our mappings to give THP something to collapse */
-#if 0
-		if (count % REALLOC_INTERVAL == 0) {
-			for (i = 0; i < MAP_SIZE/dma_map.size; i++) {
-				if (maps[i]) {
-					munmap(maps[i], dma_map.size);
-					maps[i] = NULL;
-				}
-			}
-			if (count) {
-				printf("\t%ld\n", count);
-				//return 0;
-			}
-			printf("|");
-			fflush(stdout);
-		}
-#endif
 		dma_map.iova = 0x100000000;
 		/* Map MAP_CHUNK at a time, each chunk is pinned on map, so THP can't do anything until unmap */
 		for (i = 0; i < MAP_SIZE/dma_map.size; i++, dma_map.iova += dma_map.size) {
@@ -167,14 +198,8 @@ int main(int argc, char **argv)
 					return -1;
 				}
 			}
-#if 0
-			ret = madvise(maps[i], dma_map.size, MADV_HUGEPAGE);
-			if (ret) {
-				printf("Madvise failed (%s)\n", strerror(errno));
-			}
-#endif
-			printf("iova is %llx ,vaddr is %llx, size is %llx\n",
-				   	dma_map.iova,dma_map.vaddr,dma_map.size);
+			//printf("iova is %llx ,vaddr is %llx, size is %llx\n",
+			//	   	dma_map.iova,dma_map.vaddr,dma_map.size);
 			gsize += 0x1000 * 20;
 			dma_map.vaddr = (unsigned long)maps[i];
 
@@ -182,7 +207,6 @@ int main(int argc, char **argv)
 			if (ret) {
 				printf("Failed to map memory (%s)\n",
 					strerror(errno));
-				printf("gsize is 0x%llx\n", gsize);
 				return ret;
 			}
 		}
@@ -196,9 +220,9 @@ int main(int argc, char **argv)
 			printf("Failed to unmap memory (%s)\n", strerror(errno));
 			return ret;
 		}
-		printf("gsize is 0x%llx\n", gsize);
-//		printf("-");
 		fflush(stdout);
 
+	vfio_get_device(group, argv[1]);
+	printf("test finish\n");
 	return 0;
 }
