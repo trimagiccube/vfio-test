@@ -60,14 +60,16 @@ int vfio_get_device(int groupfd, const char *name)
 	if (ioctl(device_fd, VFIO_DEVICE_GET_REGION_INFO, info)) {
 		printf("get region failed\n");
 	}
-	printf("region 0: size is 0x%lx, offset is 0x%llx\n", info->size, info->offset);
+	printf("region 0: size is 0x%lx, offset is 0x%llx, flags is 0x%lx\n",
+		   	info->size, info->offset, info->flags);
 	membar = mmap(NULL, info->size, PROT_READ|PROT_WRITE, MAP_SHARED, device_fd, info->offset);
 	/*regbar*/
 	info->index = 2;
 	if (ioctl(device_fd, VFIO_DEVICE_GET_REGION_INFO, info)) {
 		printf("get region failed\n");
 	}
-	printf("region 2: size is 0x%lx, offset is 0x%llx\n", info->size, info->offset);
+	printf("region 2: size is 0x%lx, offset is 0x%llx flags is 0x%lx\n",
+		   	info->size, info->offset, info->flags);
 	regbar = mmap(NULL, info->size, PROT_READ|PROT_WRITE, MAP_SHARED, device_fd, info->offset);
 	printf("value of offset 0xb800 is 0x%lx\n", *((u32 *)(regbar + testreg_off)));
     return 0;
@@ -92,7 +94,9 @@ int main(int argc, char **argv)
 	struct vfio_iommu_type1_dma_unmap dma_unmap = {
 		.argsz = sizeof(dma_unmap)
 	};
-
+	struct vfio_iommu_type1_info iommu_info = {
+		.argsz = sizeof(iommu_info)
+	};
 	if (argc != 2) {
 		usage(argv[0]);
 		return -1;
@@ -111,6 +115,12 @@ int main(int argc, char **argv)
 		       container, strerror(errno));
 		return container;
 	}
+
+	if (ioctl(container, VFIO_GET_API_VERSION) != VFIO_API_VERSION)
+		printf("Unknown API version\n");
+
+	if (!ioctl(container, VFIO_CHECK_EXTENSION, VFIO_TYPE1_IOMMU))
+		printf(" Doesn't support the IOMMU driver we want.\n");
 
 	snprintf(path, sizeof(path),
 		 "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/",
@@ -169,6 +179,12 @@ int main(int argc, char **argv)
 		return ret;
 	}
 
+	ret = ioctl(container, VFIO_IOMMU_GET_INFO, &iommu_info);
+	if (ret) {
+		printf("Failed to get IOMMU info\n");
+		return ret;
+	}
+	printf("iommu flag is 0x%x\n", iommu_info.flags);
 	/* Test code */
 	dma_map.flags = VFIO_DMA_MAP_FLAG_READ | VFIO_DMA_MAP_FLAG_WRITE;
 	dma_map.size = MAP_CHUNK;
