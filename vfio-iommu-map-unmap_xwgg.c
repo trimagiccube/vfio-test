@@ -36,6 +36,7 @@ int vfio_get_device(int groupfd, const char *name)
 	void *regbar;
 	u32 testreg_off = 0xb800;
 	void *membar;
+	u32 testvalue;
 
 	info = malloc(sizeof(struct vfio_region_info));
 	device_fd = ioctl(groupfd, VFIO_GROUP_GET_DEVICE_FD, name);
@@ -72,6 +73,9 @@ int vfio_get_device(int groupfd, const char *name)
 		   	info->size, info->offset, info->flags);
 	regbar = mmap(NULL, info->size, PROT_READ|PROT_WRITE, MAP_SHARED, device_fd, info->offset);
 	printf("value of offset 0xb800 is 0x%lx\n", *((u32 *)(regbar + testreg_off)));
+	ret = pread(device_fd, &testvalue, sizeof(u32), info->offset + testreg_off);
+	printf("pread ret is %d, value is 0x%lx\n", ret, testvalue);
+
     return 0;
 }
 
